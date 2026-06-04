@@ -1,0 +1,208 @@
+"""
+website_email_gen.py
+4 functions: scrape → build prompt → generate → serve
+"""
+
+import re
+
+import httpx
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from langchain_core.prompts import PromptTemplate
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel
+
+from app.models.constants import llm_model
+
+load_dotenv()
+
+app = FastAPI()
+
+# ── LLM ───────────────────────────────────────────────────────────────────────
+
+# llm = ChatGroq(
+#     model="llama-3.3-70b-versatile",
+#     temperature=0.7,
+#     api_key=os.getenv("GROQ_API_KEY"),
+# )
+
+llm = ChatOllama(
+    model=llm_model,
+    temperature=0.7
+)
+
+# ── Prompt ─────────────────────────────────────────────────────────────────────
+
+EMAIL_PROMPT = """You are a senior B2B strategist writing a cold email from one CXO to another — not a salesperson, not a vendor.
+
+Your task: Write a highly personalized, insight-driven outreach email for NexusLink (a custom software and AI integration partner), targeting CXOs of IT services or software companies.
+
+---
+
+STEP 1 — ANALYZE THE RECEIVER'S WEBSITE
+Extract and understand:
+- What they offer and their core value proposition
+- Business model and market positioning
+- Technical signals: AI, ML, automation, integrations, product maturity
+- Growth signals: hiring, new features, case studies, expansion
+- Likely pain points: scaling engineering, AI gaps, product velocity, legacy systems
+
+STEP 2 — IDENTIFY ONE RELEVANT SYNERGY WITH NEXUSLINK
+NexusLink does: custom software development, AI/ML integration, product-grade engineering across HealthTech, EdTech, FashionTech, Wellness, Pharma, Field Service Management.
+- Highlight ONLY 1–2 synergies that are genuinely relevant to this receiver
+- Do NOT list all services
+- Make the connection feel natural and strategic, not promotional
+
+STEP 3 — WRITE THE EMAIL
+
+Tone: Sharp, peer-to-peer, concise. No fluff. No sales voice.
+
+STRUCTURE:
+- Subject: specific, curiosity-driven, under 80 characters — provide 2–3 options
+- Opening: one line referencing something real and specific from their website
+- Middle: a brief, thoughtful observation + how NexusLink has helped similar companies
+- Closing: one soft line that ends naturally — no ask, no CTA, no commitment request
+
+STRICT RULES:
+- Greet with exactly: Hi {receiver_name},
+- End with sender's first name only
+- Email body must be 120–180 words — strictly enforce this
+- No bullet points inside the email body
+- No "I hope this email finds you well", no "introducing", no "impressed by", no synonyms of these
+- No spam words: free, urgent, guarantee, limited, exclusive, act now
+- Never mention outsourcing
+- Never fabricate or assume sender's company name, team size, or location — if not provided, omit entirely
+- Never write "[my company]", "[your company]", or any bracketed placeholder
+- Never generate fake URLs or links
+
+Sender: {sender_name}
+Sender's objective: {sender_objective}
+
+Receiver Name: {receiver_name}
+Receiver's Domain: {receiver_domain}
+Receiver's Website Info:
+{website_content}
+
+If website content is not found,` write a sharp, generic peer-to-peer B2B email without fabricating any receiver details.
+
+---
+
+ **Output Format — STRICT. Never deviate:**
+- Line 1: Subject: <subject line>
+- Line 2: blank
+- Line 3+: email body
+
+Do NOT add any preamble, label, or commentary outside this format.
+"""
+
+# ── 4 Functions ────────────────────────────────────────────────────────────────
+
+def scrape_website(url: str) -> str:
+    """Fetch homepage, extract only the meaningful above-the-fold text."""
+    if not url.startswith("http"):
+        url = "https://" + url
+    try:
+        resp = httpx.get(url, timeout=8, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+    except Exception as e:
+        return f"Could not fetch website: {e}"
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Remove noise
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+        tag.decompose()
+
+    # Pull signal: title, meta description, h1, h2, first few paragraphs
+    parts = []
+
+    title = soup.find("title")
+    if title:
+        parts.append(title.get_text(strip=True))
+
+    meta = soup.find("meta", attrs={"name": "description"}) or \
+           soup.find("meta", attrs={"property": "og:description"})
+    if meta and meta.get("content"):
+        parts.append(meta["content"].strip())
+
+    for tag in soup.find_all(["h1", "h2"])[:6]:
+        text = tag.get_text(strip=True)
+        if text:
+            parts.append(text)
+
+    for p in soup.find_all("p")[:5]:
+        text = p.get_text(strip=True)
+        if len(text) > 40:
+            parts.append(text)
+
+    content = "\n".join(parts)
+    return content[:4000]  # keep it lean
+
+
+def build_prompt(sender_name: str, sender_role: str, sender_objective: str,
+                 receiver_name: str, receiver_domain:str, website_content: str) -> str:
+    """Fill the prompt template with all inputs."""
+    prompt = PromptTemplate(
+        template=EMAIL_PROMPT,
+        input_variables=["sender_name", "sender_role", "sender_objective",
+                         "receiver_name", "receiver_domain", "website_content"],
+    )
+    return prompt.format(
+        sender_name=sender_name,
+        sender_role=sender_role,
+        sender_objective=sender_objective,
+        receiver_name=receiver_name,
+        receiver_domain=receiver_domain,
+        website_content=website_content,
+    )
+
+
+async def generate_email(filled_prompt: str) -> dict:
+    """Call LLM, extract subject and body."""
+    result = await llm.ainvoke(filled_prompt)
+    text = result.content.strip()
+
+    # Extract subject and body
+    subject, body = "", text
+    match = re.search(r"(?i)subject\s*[:\-]\s*(.+)", text)
+    if match:
+        subject = match.group(1).strip()
+        body = text[match.end():].strip()
+
+    return {"subject": subject, "body": body}
+
+
+# ── Endpoint ───────────────────────────────────────────────────────────────────
+
+class EmailRequest(BaseModel):
+    sender_name: str
+    sender_role: str
+    sender_objective: str   # what you do / why you're reaching out
+    receiver_name: str
+    receiver_website: str   # e.g. "kniru.com"
+
+
+@app.post("/generate_email")
+async def generate_website_email(req: EmailRequest):
+    website_content = scrape_website(req.receiver_website)
+    if not website_content:
+        raise HTTPException(status_code=422, detail="Could not extract content from the website.")
+    print(website_content)
+
+    filled_prompt = build_prompt(
+        sender_name=req.sender_name,
+        sender_role=req.sender_role,
+        sender_objective=req.sender_objective,
+        receiver_name=req.receiver_name,
+        receiver_domain=req.receiver_website,
+        website_content=website_content,
+    )
+
+    email = await generate_email(filled_prompt)
+    return {
+        "receiver": req.receiver_name,
+        "subject": email["subject"],
+        "body": email["body"],
+    }
