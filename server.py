@@ -4,16 +4,18 @@ website_email_gen.py
 """
 
 import re
+import os
 
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from langchain_core.prompts import PromptTemplate
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from pydantic import BaseModel
 
-from app.models.constants import llm_model
+# from app.models.constants import llm_model
 
 load_dotenv()
 
@@ -21,16 +23,16 @@ app = FastAPI()
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
-# llm = ChatGroq(
-#     model="llama-3.3-70b-versatile",
-#     temperature=0.7,
-#     api_key=os.getenv("GROQ_API_KEY"),
-# )
-
-llm = ChatOllama(
-    model=llm_model,
-    temperature=0.7
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0.7,
+    api_key=os.getenv("GROQ_API_KEY"),
 )
+
+# llm = ChatOllama(
+#     model=llm_model,
+#     temperature=0.7
+# )
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 
