@@ -1,9 +1,11 @@
 beautifulsoup4
 fastapi
+gspread
 httpx
 langchain
 langchain-core
 langchain-groq
+openai
 pandas
 pydantic
 python-dotenv
