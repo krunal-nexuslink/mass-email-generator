@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mass Email Generator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Mass Email Generator</h1>
+
+    <form id="email-form">
+      <div class="form-group">
+        <label for="sender_name">Sender Name</label>
+        <input type="text" id="sender_name" required>
+      </div>
+      <div class="form-group">
+        <label for="sender_role">Sender Role</label>
+        <input type="text" id="sender_role" required>
+      </div>
+      <div class="form-group">
+        <label for="sender_objective">Sender Objective</label>
+        <textarea id="sender_objective" rows="4" required></textarea>
+      </div>
+      <div class="form-group">
+        <label for="sheet_url">Google Sheet URL</label>
+        <input type="text" id="sheet_url" placeholder="https://docs.google.com/spreadsheets/d/..." required>
+      </div>
+      <div style="display:flex;gap:16px;">
+        <div class="form-group" style="flex:1;">
+          <label for="start_row">Start Row</label>
+          <input type="number" id="start_row" value="1" min="1" required>
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label for="end_row">End Row</label>
+          <input type="number" id="end_row" value="5" min="1" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Generate Emails</button>
+    </form>
+
+    <div id="progress-section" style="display:none;">
+      <h2>Progress</h2>
+      <div class="progress-container">
+        <div id="progress-bar" class="progress-bar"></div>
+        <span id="progress-percent">0%</span>
+      </div>
+      <p id="progress-status">Starting...</p>
+      <button id="stop-btn" class="btn stop-btn">Stop</button>
+    </div>
+
+    <div id="results-section" style="display:none;">
+      <h2>Results</h2>
+      <div id="results-summary"></div>
+      <div id="results-table-wrapper">
+        <table id="results-table"></table>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

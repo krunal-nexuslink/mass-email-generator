@@ -3,3 +3,6 @@ __pycache__/
 *.log
 .venv/
 .env
+.omo
+node_modules/
+ui/node_modules/

@@ -115,6 +115,23 @@ def normalize_company_description(value, row_idx: int, context: str = "") -> str
     return str(value)
 
 
+def is_no_context_422(response: requests.Response) -> bool:
+    """True when server reports both website content and company description are unavailable."""
+    if response.status_code != 422:
+        return False
+
+    detail_text = response.text
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail_text = str(payload.get("detail") or detail_text)
+    except ValueError:
+        pass
+
+    lowered = detail_text.lower()
+    return "could not extract website content" in lowered and "no company_description" in lowered
+
+
 def test_rows_without_csv_write(start_row: int, end_row: int) -> list[dict]:
     """Send requests for an inclusive row range without mutating dataframe/checkpoint/csv."""
     if start_row < 0 or end_row < 0:
@@ -195,6 +212,19 @@ Rules: No em dashes. No bullets. No bold. Never mention team size or experience.
                 logging.error("[TEST] Rate limit (unknown bucket) at row %d: %s", idx, cause)
                 raise RuntimeError(f"Rate limit at row {idx}. Cause: {cause}")
 
+            if is_no_context_422(response):
+                logging.warning(
+                    "[TEST] Skipping row %d because website scraping failed and company description is missing.",
+                    idx,
+                )
+                results.append(
+                    {
+                        "row": int(idx),
+                        "status": "skipped_no_context",
+                    }
+                )
+                break
+
             logging.error(
                 "[TEST] Request failed at row %d with status %d: %s",
                 idx,
@@ -257,7 +287,7 @@ Rules: No em dashes. No bullets. No bold. Never mention team size or experience.
             if elapsed < min_interval_seconds:
                 time.sleep(min_interval_seconds - elapsed)
 
-            response = requests.post(URL, json=payload, timeout=90)
+            response = requests.post(URL, json=payload, timeout=180)
             last_request_time = time.time()
             print(f"Response for row {idx}: {response.status_code} - {response.text}")
 
@@ -291,6 +321,21 @@ Rules: No em dashes. No bullets. No bold. Never mention team size or experience.
 
                 logging.error("Rate limit (unknown bucket) at row %d: %s", idx, cause)
                 raise RuntimeError(f"Rate limit at row {idx}. Cause: {cause}")
+
+            if is_no_context_422(response):
+                logging.warning(
+                    "Skipping row %d because website scraping failed and company description is missing.",
+                    idx,
+                )
+                df.at[idx, "generated_email_subject"] = "N/A"
+                df.at[idx, "generated_email_body"] = "N/A"
+                save_checkpoint(idx + 1)
+                processed_since_save += 1
+
+                if processed_since_save >= save_every:
+                    df.to_csv(csv_path, index=False)
+                    processed_since_save = 0
+                break
 
             logging.error("Request failed at row %d with status %d: %s", idx, response.status_code, response.text)
             raise RuntimeError(
