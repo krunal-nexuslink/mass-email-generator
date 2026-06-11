@@ -7,29 +7,17 @@ import asyncio
 import json
 import os
 import re
-import uuid
 
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import HTTPException
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest
 
 load_dotenv(override=True)
-
-app = FastAPI()
-
-# ── CORS ──────────────────────────────────────────────────────────────────────
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 def _classify_rate_limit_bucket(message: str) -> str:
@@ -49,16 +37,6 @@ def _classify_rate_limit_bucket(message: str) -> str:
     if any(marker in text for marker in minute_markers):
         return "minute"
     return "unknown"
-
-# ── Job Store ──────────────────────────────────────────────────────────────────────────────
-
-jobs: dict[str, dict] = {}
-JOB_PENDING = "pending"
-JOB_RUNNING = "running"
-JOB_DONE = "done"
-JOB_CANCELLED = "cancelled"
-JOB_ERROR = "error"
-
 
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
@@ -206,42 +184,18 @@ async def generate_email(user_message: str) -> dict:
     return await asyncio.to_thread(_generate_email_sync, user_message)
 
 
-# ── Background Runner ─────────────────────────────────────────────────────────────────────
+# ── Function Registration for Mass Generation ──────────────────────────────────
+from server_shared import FUNCTIONS
 
-async def _run_mass_generate(job_id: str, req):
-    from mass_email_generator import mass_generate_emails
 
-    async def progress_callback(current: int, total: int):
-        jobs[job_id]["current"] = current
-        jobs[job_id]["progress"] = int((current / total) * 100) if total > 0 else 0
+async def _openrouter_generate_email(sn, sr, so, rn, rd, wc, cd):
+    msg = build_user_message(sn, sr, so, rn, rd, wc, cd)
+    result = await generate_email(msg)
+    return result["subject"], result["body"]
 
-    try:
-        jobs[job_id]["status"] = JOB_RUNNING
-        result = await mass_generate_emails(
-            sender_name=req.sender_name,
-            sender_role=req.sender_role,
-            sender_objective=req.sender_objective,
-            google_sheet_url=req.google_sheet_url,
-            start_row=req.start_row,
-            end_row=req.end_row,
-            progress_callback=progress_callback,
-            cancel_flag=lambda: jobs[job_id].get("cancel", False),
-        )
-        if jobs[job_id].get("cancel"):
-            jobs[job_id]["status"] = JOB_CANCELLED
-        else:
-            jobs[job_id]["results"] = result
-            jobs[job_id]["progress"] = 100
-            jobs[job_id]["status"] = JOB_DONE
-    except RuntimeError as e:
-        if "cancelled" in str(e).lower():
-            jobs[job_id]["status"] = JOB_CANCELLED
-        else:
-            jobs[job_id]["status"] = JOB_ERROR
-            jobs[job_id]["error"] = str(e)
-    except Exception as e:
-        jobs[job_id]["status"] = JOB_ERROR
-        jobs[job_id]["error"] = str(e)
+
+FUNCTIONS["scrape_website_fn"] = scrape_website
+FUNCTIONS["generate_email_fn"] = _openrouter_generate_email
 
 
 class EmailRequest(BaseModel):
@@ -251,15 +205,6 @@ class EmailRequest(BaseModel):
     receiver_name: str
     receiver_website: str
     company_description: str | None = None
-
-
-class MassEmailRequest(BaseModel):
-    sender_name: str
-    sender_role: str
-    sender_objective: str
-    google_sheet_url: str
-    start_row: int = Field(ge=1, description="First data row (1-based, where 1 = first row after header)")
-    end_row: int = Field(ge=1, description="Last data row (inclusive)")
 
 
 @app.post("/generate_email")
@@ -310,44 +255,3 @@ async def generate_website_email(req: EmailRequest):
         "subject": email["subject"],
         "body": email["body"],
     }
-
-
-@app.post("/mass_generate_email")
-async def mass_generate_website_email(req: MassEmailRequest):
-    job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {
-        "status": JOB_PENDING,
-        "progress": 0,
-        "total": req.end_row - req.start_row + 1,
-        "current": 0,
-        "cancel": False,
-        "results": None,
-        "error": None,
-    }
-    asyncio.create_task(_run_mass_generate(job_id, req))
-    return {"job_id": job_id, "status": JOB_PENDING}
-
-
-@app.get("/mass_generate_email/status/{job_id}")
-async def get_job_status(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "progress": job["progress"],
-        "total": job["total"],
-        "current": job["current"],
-        "results": job["results"],
-        "error": job["error"],
-    }
-
-
-@app.post("/mass_generate_email/cancel/{job_id}")
-async def cancel_job(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job["cancel"] = True
-    return {"job_id": job_id, "status": "cancelling"}

@@ -1,6 +1,6 @@
 beautifulsoup4
 fastapi
-gspread
+gspread>=6.0.0
 httpx
 langchain
 langchain-core
@@ -11,3 +11,5 @@ pydantic
 python-dotenv
 requests
 uvicorn
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0

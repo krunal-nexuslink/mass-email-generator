@@ -11,7 +11,14 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from server import build_prompt, generate_email, scrape_website
+# ── Type aliases for dependency injection ─────────────────────────────────────
+
+GenerateEmailFn = Callable[[str, str, str, str, str, str, str], tuple[str, str]]
+"""Args: sender_name, sender_role, sender_objective, receiver_name,
+receiver_domain, website_content, company_description. Returns (subject, body)."""
+
+ScrapeWebsiteFn = Callable[[str], str]
+"""Args: url. Returns website content string."""
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +77,8 @@ async def _process_single_row(
     sender_role: str,
     sender_objective: str,
     row: pd.Series,
+    generate_email_fn: GenerateEmailFn | None = None,
+    scrape_website_fn: ScrapeWebsiteFn | None = None,
 ) -> tuple[str, str]:
     """Process one sheet row and return (subject, body).
 
@@ -85,7 +94,27 @@ async def _process_single_row(
 
     Raises ValueError if First name or Company domain is missing.
     Returns ("SKIPPED", "") if both website scrape and company description are unavailable.
+
+    When generate_email_fn / scrape_website_fn are provided, they are used directly.
+    When omitted, the function falls back to importing from server.py (backward compat).
     """
+    # ── Resolve functions: injected or fall back to server imports ──────────
+    if generate_email_fn is not None and scrape_website_fn is not None:
+        _generate_email = generate_email_fn
+        _scrape_website = scrape_website_fn
+    else:
+        import server
+
+        async def _generate_email(
+            sn: str, sr: str, so: str, rn: str, rd: str, wc: str, cd: str
+        ) -> tuple[str, str]:
+            prompt = server.build_prompt(sn, sr, so, rn, rd, wc, cd)
+            result = await server.generate_email(prompt)
+            return result["subject"], result["body"]
+
+        _scrape_website = server.scrape_website  # sync Callable[[str], str]
+
+    # ── Extract row data ────────────────────────────────────────────────────
     first_name = row.get("First name", "")
     last_name = row.get("Last name", "")
     domain = row.get("Company domain", "")
@@ -105,8 +134,8 @@ async def _process_single_row(
 
     cd = str(company_desc_raw).strip() if not pd.isna(company_desc_raw) else ""
 
-    # scrape_website is sync — run in thread to avoid blocking the event loop
-    website_content = await asyncio.to_thread(scrape_website, receiver_domain)
+    # _scrape_website is sync — run in thread to avoid blocking the event loop
+    website_content = await asyncio.to_thread(_scrape_website, receiver_domain)
 
     website_failed = not website_content or website_content.startswith(
         "Could not fetch website:"
@@ -126,18 +155,11 @@ async def _process_single_row(
         )
         website_content = ""
 
-    filled_prompt = build_prompt(
-        sender_name=sender_name,
-        sender_role=sender_role,
-        sender_objective=sender_objective,
-        receiver_name=receiver_name,
-        receiver_domain=receiver_domain,
-        website_content=website_content,
-        company_description=cd,
+    subject, body = await _generate_email(
+        sender_name, sender_role, sender_objective,
+        receiver_name, receiver_domain, website_content, cd,
     )
-
-    result = await generate_email(filled_prompt)
-    return result["subject"], result["body"]
+    return subject, body
 
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
@@ -154,6 +176,8 @@ async def mass_generate_emails(
     save_every: int = 10,
     progress_callback: Callable | None = None,
     cancel_flag: Callable | None = None,
+    generate_email_fn: GenerateEmailFn | None = None,
+    scrape_website_fn: ScrapeWebsiteFn | None = None,
 ) -> dict:
     """Main orchestrator for mass email generation.
 
@@ -224,7 +248,11 @@ async def mass_generate_emails(
         )
 
         tasks = [
-            _process_single_row(sender_name, sender_role, sender_objective, row)
+            _process_single_row(
+                sender_name, sender_role, sender_objective, row,
+                generate_email_fn=generate_email_fn,
+                scrape_website_fn=scrape_website_fn,
+            )
             for _, row in batch_rows.iterrows()
         ]
 
@@ -287,3 +315,126 @@ async def mass_generate_emails(
         "csv_path": csv_path,
         "results": results,
     }
+
+
+# ── Sheet writer ──────────────────────────────────────────────────────────────
+
+
+async def _write_results_to_sheet(
+    credentials,
+    sheet_url: str,
+    results: list[dict],
+    gid: int | None = None,
+) -> dict:
+    """Write generated email results back to the Google Sheet using gspread.
+
+    Args:
+        credentials: google.oauth2.credentials.Credentials object
+        sheet_url: Full Google Sheets URL
+        results: List of dicts with keys: sheet_row, subject, body, status
+        gid: Optional gid override (parsed from URL if not provided)
+
+    Returns:
+        dict with keys: status, rows_written, error
+    """
+    import gspread
+    from google.auth.transport.requests import Request
+
+    try:
+        sheet_id, parsed_gid = _parse_sheet_url(sheet_url)
+    except Exception as e:
+        return {"status": "failed", "rows_written": 0, "error": f"Failed to parse sheet URL: {e}"}
+
+    target_gid = gid if gid is not None else parsed_gid
+
+    if credentials.expired and credentials.refresh_token:
+        try:
+            credentials.refresh(Request())
+        except Exception as e:
+            return {"status": "failed", "rows_written": 0, "error": f"Token refresh failed: {e}"}
+
+    try:
+        gc = gspread.authorize(credentials)
+        sh = gc.open_by_key(sheet_id)
+
+        if target_gid != 0:
+            worksheet = sh.get_worksheet_by_id(target_gid)
+        else:
+            worksheet = sh.get_worksheet(0)
+
+        if worksheet is None:
+            return {"status": "failed", "rows_written": 0, "error": "Worksheet not found"}
+
+        header = worksheet.row_values(1)
+
+        col_subject = None
+        col_body = None
+        for i, col_name in enumerate(header):
+            col_name_stripped = col_name.strip().lower()
+            if col_name_stripped == "generated_email_subject":
+                col_subject = i + 1
+            elif col_name_stripped == "generated_email_body":
+                col_body = i + 1
+
+        if col_subject is None:
+            col_subject = len(header) + 1
+            worksheet.update_cell(1, col_subject, "generated_email_subject")
+
+        if col_body is None:
+            col_body = max(len(header) + (1 if col_subject is None else 2), col_subject + 1)
+            worksheet.update_cell(1, col_body, "generated_email_body")
+
+        rows_written = 0
+        for entry in results:
+            sheet_row = entry.get("sheet_row", 0)
+            if sheet_row < 2:
+                continue
+
+            subject = entry.get("subject", "")
+            body = entry.get("body", "")
+            status = entry.get("status", "")
+
+            if status == "skipped_no_context" or subject == "N/A":
+                subject = "N/A"
+                body = "N/A"
+
+            try:
+                worksheet.update_cell(sheet_row, col_subject, subject)
+                worksheet.update_cell(sheet_row, col_body, body)
+                rows_written += 1
+            except Exception as cell_err:
+                err_str = str(cell_err).lower()
+                if "429" in err_str or "rate limit" in err_str:
+                    await asyncio.sleep(1)
+                    try:
+                        worksheet.update_cell(sheet_row, col_subject, subject)
+                        worksheet.update_cell(sheet_row, col_body, body)
+                        rows_written += 1
+                    except Exception:
+                        pass
+                elif "401" in err_str or "unauthorized" in err_str:
+                    if credentials.expired:
+                        credentials.refresh(Request())
+                    try:
+                        worksheet.update_cell(sheet_row, col_subject, subject)
+                        worksheet.update_cell(sheet_row, col_body, body)
+                        rows_written += 1
+                    except Exception:
+                        pass
+                else:
+                    pass
+
+        return {
+            "status": "success" if rows_written > 0 else "failed",
+            "rows_written": rows_written,
+            "error": None,
+        }
+
+    except gspread.exceptions.APIError as e:
+        return {"status": "failed", "rows_written": 0, "error": f"Google Sheets API error: {e}"}
+    except gspread.exceptions.SpreadsheetNotFound:
+        return {"status": "failed", "rows_written": 0, "error": "Spreadsheet not found. Check the URL."}
+    except gspread.exceptions.WorksheetNotFound:
+        return {"status": "failed", "rows_written": 0, "error": "Worksheet not found."}
+    except Exception as e:
+        return {"status": "failed", "rows_written": 0, "error": f"Unexpected error: {e}"}

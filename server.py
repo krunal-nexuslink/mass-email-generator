@@ -9,17 +9,33 @@ import os
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from langchain_core.prompts import PromptTemplate
-# from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
 
-# from app.models.constants import llm_model
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest
 
-load_dotenv()
+load_dotenv(override=True)
 
-app = FastAPI()
+
+def _classify_rate_limit_bucket(message: str) -> str:
+    """Classify rate-limit scope for easier client handling."""
+    text = (message or "").lower()
+    day_markers = ["per day", "daily", "tokens per day", "requests per day", "tpd", "rpd"]
+    minute_markers = [
+        "per minute",
+        "tokens per minute",
+        "requests per minute",
+        "tpm",
+        "rpm",
+        "minute",
+    ]
+    if any(marker in text for marker in day_markers):
+        return "day"
+    if any(marker in text for marker in minute_markers):
+        return "minute"
+    return "unknown"
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
@@ -86,7 +102,10 @@ Receiver's Domain: {receiver_domain}
 Receiver's Website Info:
 {website_content}
 
-If website content is not found,` write a sharp, generic peer-to-peer B2B email without fabricating any receiver details.
+Receiver Company Description:
+{company_description}
+
+If website content is not found, Use Receiver's Company Description for generating email.
 
 ---
 
@@ -144,12 +163,15 @@ def scrape_website(url: str) -> str:
 
 
 def build_prompt(sender_name: str, sender_role: str, sender_objective: str,
-                 receiver_name: str, receiver_domain:str, website_content: str) -> str:
+                 receiver_name: str, receiver_domain:str, website_content: str,
+                 company_description: str | None = None) -> str:
     """Fill the prompt template with all inputs."""
     prompt = PromptTemplate(
         template=EMAIL_PROMPT,
         input_variables=["sender_name", "sender_role", "sender_objective",
-                         "receiver_name", "receiver_domain", "website_content"],
+                         "receiver_name", "receiver_domain", "website_content", 
+                          "company_description"
+                        ],
     )
     return prompt.format(
         sender_name=sender_name,
@@ -158,6 +180,7 @@ def build_prompt(sender_name: str, sender_role: str, sender_objective: str,
         receiver_name=receiver_name,
         receiver_domain=receiver_domain,
         website_content=website_content,
+        company_description=company_description
     )
 
 
@@ -176,6 +199,19 @@ async def generate_email(filled_prompt: str) -> dict:
     return {"subject": subject, "body": body}
 
 
+# ── Function Registration for Mass Generation ──────────────────────────────────
+from server_shared import FUNCTIONS
+
+
+async def _groq_generate_email(sn, sr, so, rn, rd, wc, cd):
+    prompt = build_prompt(sn, sr, so, rn, rd, wc, cd)
+    result = await generate_email(prompt)
+    return result["subject"], result["body"]
+
+
+FUNCTIONS["scrape_website_fn"] = scrape_website
+FUNCTIONS["generate_email_fn"] = _groq_generate_email
+
 # ── Endpoint ───────────────────────────────────────────────────────────────────
 
 class EmailRequest(BaseModel):
@@ -184,14 +220,24 @@ class EmailRequest(BaseModel):
     sender_objective: str   # what you do / why you're reaching out
     receiver_name: str
     receiver_website: str   # e.g. "kniru.com"
-
+    company_description: str | None = None
 
 @app.post("/generate_email")
 async def generate_website_email(req: EmailRequest):
     website_content = scrape_website(req.receiver_website)
-    if not website_content:
-        raise HTTPException(status_code=422, detail="Could not extract content from the website.")
-    print(website_content)
+
+    website_failed = (
+        not website_content
+        or website_content.startswith("Could not fetch website:")
+    )
+    effective_website_content = "" if website_failed else website_content
+    effective_company_description = (req.company_description or "").strip() if website_failed else ""
+
+    if not effective_website_content and not effective_company_description:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract website content and no company_description was provided."
+        )
 
     filled_prompt = build_prompt(
         sender_name=req.sender_name,
@@ -199,12 +245,30 @@ async def generate_website_email(req: EmailRequest):
         sender_objective=req.sender_objective,
         receiver_name=req.receiver_name,
         receiver_domain=req.receiver_website,
-        website_content=website_content,
+        website_content=effective_website_content,
+        company_description=effective_company_description
     )
 
-    email = await generate_email(filled_prompt)
+    try:
+        email = await generate_email(filled_prompt)
+    except Exception as e:
+        message = str(e)
+        lowered = message.lower()
+        if "rate limit" in lowered or "too many requests" in lowered or "429" in lowered:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "rate_limit",
+                    "bucket": _classify_rate_limit_bucket(message),
+                    "message": message,
+                },
+            )
+        raise HTTPException(status_code=502, detail=f"LLM generation failed: {message}")
+
     return {
         "receiver": req.receiver_name,
         "subject": email["subject"],
         "body": email["body"],
     }
+
+

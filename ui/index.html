@@ -10,6 +10,14 @@
   <div class="container">
     <h1>Mass Email Generator</h1>
 
+    <div id="auth-section">
+      <button id="google-signin-btn" class="btn btn-google" style="display:none">Sign in with Google</button>
+      <div id="auth-status" style="display:none">
+        <span id="user-email"></span>
+        <button id="signout-btn" class="btn" style="display:none">Sign out</button>
+      </div>
+    </div>
+
     <form id="email-form">
       <div class="form-group">
         <label for="sender_name">Sender Name</label>
@@ -36,6 +44,10 @@
           <label for="end_row">End Row</label>
           <input type="number" id="end_row" value="5" min="1" required>
         </div>
+      </div>
+      <div id="write-to-sheet-group" style="display:none" class="form-group">
+        <input type="checkbox" id="write-to-sheet-checkbox">
+        <label for="write-to-sheet-checkbox">Write results back to Google Sheet</label>
       </div>
       <button type="submit" class="btn btn-primary">Generate Emails</button>
     </form>

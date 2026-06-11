@@ -1,6 +1,62 @@
 let currentJobId = null;
 let pollingTimer = null;
 
+let isAuthenticated = false;
+
+async function checkAuthStatus() {
+  try {
+    const resp = await fetch("/auth/status");
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const signinBtn = document.getElementById("google-signin-btn");
+    const authStatus = document.getElementById("auth-status");
+    const signoutBtn = document.getElementById("signout-btn");
+    const userEmail = document.getElementById("user-email");
+    const sheetCheckbox = document.getElementById("write-to-sheet-group");
+
+    if (data.configured === false) {
+      // OAuth not configured — hide sign-in button entirely
+      if (signinBtn) signinBtn.style.display = "none";
+      return;
+    }
+
+    if (data.authenticated) {
+      isAuthenticated = true;
+      if (signinBtn) signinBtn.style.display = "none";
+      if (authStatus) {
+        authStatus.style.display = "inline";
+        if (userEmail) userEmail.textContent = data.email || "Authenticated";
+      }
+      if (signoutBtn) signoutBtn.style.display = "inline";
+      if (sheetCheckbox) sheetCheckbox.style.display = "flex";
+    } else {
+      isAuthenticated = false;
+      if (signinBtn) signinBtn.style.display = "inline-flex";
+      if (authStatus) authStatus.style.display = "none";
+      if (signoutBtn) signoutBtn.style.display = "none";
+      if (sheetCheckbox) sheetCheckbox.style.display = "none";
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+document.addEventListener("DOMContentLoaded", checkAuthStatus);
+
+document.getElementById("google-signin-btn")?.addEventListener("click", () => {
+  window.location.href = "/auth/google/login";
+});
+
+document.getElementById("signout-btn")?.addEventListener("click", async () => {
+  try {
+    await fetch("/auth/logout", { method: "POST" });
+    await checkAuthStatus();
+  } catch (e) {
+    // ignore
+  }
+});
+
 document.getElementById("email-form").addEventListener("submit", async (e) => {
   e.preventDefault();
 
@@ -12,6 +68,12 @@ document.getElementById("email-form").addEventListener("submit", async (e) => {
     start_row: parseInt(document.getElementById("start_row").value),
     end_row: parseInt(document.getElementById("end_row").value),
   };
+
+  // Add write_to_sheet flag if authenticated and checkbox is checked
+  const sheetCheckbox = document.getElementById("write-to-sheet-checkbox");
+  if (isAuthenticated && sheetCheckbox && sheetCheckbox.checked) {
+    formData.write_to_sheet = true;
+  }
 
   // Validation
   if (formData.end_row < formData.start_row) {
