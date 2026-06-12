@@ -17,6 +17,10 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 import google.auth.transport.requests
 import json
+from dotenv import load_dotenv
+
+# Load .env so env vars are available regardless of entry point
+load_dotenv()
 
 # ── App + CORS + Sessions ──────────────────────────────────────────────────────
 
@@ -139,7 +143,6 @@ async def _run_mass_generate(
             jobs[job_id]["status"] = JOB_CANCELLED
             return
 
-        # Sheet write-back
         if write_to_sheet and credentials is not None:
             try:
                 from mass_email_generator import _write_results_to_sheet
@@ -159,13 +162,27 @@ async def _run_mass_generate(
         jobs[job_id]["progress"] = 100
         jobs[job_id]["status"] = JOB_DONE
 
+        # If some rows failed, note it without hiding the successful results
+        if result.get("errors", 0) > 0:
+            jobs[job_id]["error"] = (
+                f"{result['successful']} succeeded, {result['skipped']} skipped, "
+                f"{result['errors']} error(s)"
+            )
+
     except RuntimeError as e:
-        if "cancelled" in str(e).lower():
-            jobs[job_id]["status"] = JOB_CANCELLED
-        else:
-            jobs[job_id]["status"] = JOB_ERROR
-            jobs[job_id]["error"] = str(e)
+        jobs[job_id]["status"] = JOB_CANCELLED
+        jobs[job_id]["error"] = str(e)
     except Exception as e:
+        if write_to_sheet and credentials is not None:
+            try:
+                from mass_email_generator import _write_results_to_sheet
+                if jobs[job_id].get("results") and jobs[job_id]["results"].get("results"):
+                    await _write_results_to_sheet(
+                        credentials, google_sheet_url,
+                        jobs[job_id]["results"]["results"],
+                    )
+            except Exception:
+                pass
         jobs[job_id]["status"] = JOB_ERROR
         jobs[job_id]["error"] = str(e)
 
@@ -274,14 +291,17 @@ async def google_login(request: Request):
     )
     flow.redirect_uri = "http://localhost:7000/auth/google/callback"
 
+    # Enable PKCE and generate code_verifier
+    flow.autogenerate_code_verifier = True
     authorization_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
 
-    # Store state in session for CSRF protection
+    # Store state and PKCE code_verifier in session
     request.session["oauth_state"] = state
+    request.session["code_verifier"] = flow.code_verifier
 
     return RedirectResponse(url=authorization_url, status_code=302)
 
@@ -310,6 +330,9 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     flow.redirect_uri = "http://localhost:7000/auth/google/callback"
+
+    # Restore the PKCE code_verifier from the login step
+    flow.code_verifier = request.session.get("code_verifier")
 
     try:
         flow.fetch_token(code=code)

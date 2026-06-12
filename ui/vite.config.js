@@ -4,6 +4,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/mass_generate_email": "http://localhost:7000",
+      "/auth": "http://localhost:7000",
     },
   },
 });

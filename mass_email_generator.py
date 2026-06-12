@@ -232,6 +232,7 @@ async def mass_generate_emails(
     successful = 0
     skipped = 0
     processed_since_save = 0
+    error_details: list[dict] = []
 
     # 4. Process in batches
     for batch_start in range(0, len(rows_to_process), batch_size):
@@ -265,10 +266,17 @@ async def mass_generate_emails(
             if isinstance(result_or_error, Exception):
                 first_name = row.get("First name", "")
                 domain = row.get("Company domain", "")
-                raise RuntimeError(
-                    f"Error processing sheet row {sheet_row} "
-                    f"(name={first_name}, domain={domain}): {result_or_error}"
+                logger.error(
+                    "Skipping sheet row %d (name=%s, domain=%s): %s",
+                    sheet_row, first_name, domain, result_or_error,
                 )
+                error_details.append({
+                    "sheet_row": sheet_row,
+                    "name": first_name,
+                    "domain": domain,
+                    "error": str(result_or_error),
+                })
+                continue
 
             subject, body = result_or_error
 
@@ -301,17 +309,26 @@ async def mass_generate_emails(
 
             # Report progress after this row
             if progress_callback:
-                await progress_callback(successful + skipped, total_requested)
+                progress_callback(successful + skipped, total_requested)
 
     # Final save
     df.to_csv(csv_path, index=False)
     logger.info("Final save: %d rows written to %s", len(rows_to_process), csv_path)
 
+    has_errors = len(error_details) > 0
+    if has_errors:
+        logger.warning(
+            "Completed with %d error(s): %s", len(error_details),
+            "; ".join(e["error"][:80] for e in error_details),
+        )
+
     return {
-        "status": "success",
+        "status": "partial" if has_errors else "success",
         "total_requested": total_requested,
         "successful": successful,
         "skipped": skipped,
+        "errors": len(error_details),
+        "error_details": error_details if has_errors else None,
         "csv_path": csv_path,
         "results": results,
     }

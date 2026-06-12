@@ -6,3 +6,4 @@ __pycache__/
 .omo
 node_modules/
 ui/node_modules/
+*.json

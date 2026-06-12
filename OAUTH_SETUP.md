@@ -42,6 +42,19 @@
 6. Add Authorized redirect URIs: `http://localhost:7000/auth/google/callback`
 7. Click "Create"
 
+### 4a. Edit an Existing OAuth 2.0 Client
+
+If you already have a client ID and need to update its JavaScript origins or redirect URIs:
+
+1. Go to https://console.cloud.google.com/apis/credentials
+2. Find your OAuth 2.0 Client ID in the list
+3. Click the **pencil/edit icon** on the right side of that entry
+4. Under **Authorized JavaScript origins**: click **Add URI** and enter `http://localhost:5173`
+5. Under **Authorized redirect URIs**: click **Add URI** and enter `http://localhost:7000/auth/google/callback`
+6. Click **Save** at the bottom
+
+These settings can be updated anytime without creating a new client.
+
 ### 5. Copy Credentials to .env
 
 After creation, a dialog shows your Client ID and Client Secret. Copy them into your `.env` file:
