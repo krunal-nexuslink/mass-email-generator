@@ -130,6 +130,16 @@ async def _run_mass_generate(
     progress_callback = lambda current, total: _update_progress(job_id, current, total)
     cancel_flag = lambda: jobs[job_id].get("cancel", False)
 
+    async def sheet_writer(results_batch: list[dict]) -> None:
+        """Incremental sheet write-back callback."""
+        if not write_to_sheet or credentials is None:
+            return
+        try:
+            from mass_email_generator import _write_results_to_sheet
+            await _write_results_to_sheet(credentials, google_sheet_url, results_batch)
+        except Exception as e:
+            logger.error("Sheet write-back failed for batch: %s", e)
+
     try:
         jobs[job_id]["status"] = JOB_RUNNING
 
@@ -144,6 +154,7 @@ async def _run_mass_generate(
             cancel_flag=cancel_flag,
             generate_email_fn=generate_email_fn,
             scrape_website_fn=scrape_website_fn,
+            sheet_write_callback=sheet_writer,
         )
 
         # Check if cancelled
@@ -151,20 +162,9 @@ async def _run_mass_generate(
             jobs[job_id]["status"] = JOB_CANCELLED
             return
 
-        if write_to_sheet and credentials is not None:
-            try:
-                from mass_email_generator import _write_results_to_sheet
-                write_result = await _write_results_to_sheet(
-                    credentials, google_sheet_url, result.get("results", [])
-                )
-                result["sheet_write_status"] = write_result.get("status", "failed")
-                result["sheet_write_error"] = write_result.get("error")
-            except Exception as e:
-                result["sheet_write_status"] = "failed"
-                result["sheet_write_error"] = str(e)
-        else:
-            result["sheet_write_status"] = "skipped"
-            result["sheet_write_error"] = None
+        # Incremental sheet writes are handled by sheet_write_callback
+        result["sheet_write_status"] = "callback" if write_to_sheet and credentials is not None else "skipped"
+        result["sheet_write_error"] = None
 
         jobs[job_id]["results"] = result
         jobs[job_id]["progress"] = 100
@@ -181,16 +181,6 @@ async def _run_mass_generate(
         jobs[job_id]["status"] = JOB_CANCELLED
         jobs[job_id]["error"] = str(e)
     except Exception as e:
-        if write_to_sheet and credentials is not None:
-            try:
-                from mass_email_generator import _write_results_to_sheet
-                if jobs[job_id].get("results") and jobs[job_id]["results"].get("results"):
-                    await _write_results_to_sheet(
-                        credentials, google_sheet_url,
-                        jobs[job_id]["results"]["results"],
-                    )
-            except Exception as sheet_err:
-                logging.warning("Failed to write results to sheet for job %s: %s", job_id, sheet_err)
         jobs[job_id]["status"] = JOB_ERROR
         jobs[job_id]["error"] = str(e)
 

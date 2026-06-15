@@ -7,7 +7,7 @@ and writes results back to the sheet.
 import asyncio
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import pandas as pd
 
@@ -126,8 +126,6 @@ async def _process_single_row(
         raise ValueError("Missing Company domain")
 
     receiver_name = str(first_name).strip()
-    if not pd.isna(last_name) and str(last_name).strip():
-        receiver_name += " " + str(last_name).strip()
     receiver_domain = str(domain).strip()
 
     logger.info("Processing: %s <%s>", receiver_name, receiver_domain)
@@ -178,6 +176,7 @@ async def mass_generate_emails(
     cancel_flag: Callable | None = None,
     generate_email_fn: GenerateEmailFn | None = None,
     scrape_website_fn: ScrapeWebsiteFn | None = None,
+    sheet_write_callback: Callable[[list[dict]], Awaitable[None]] | None = None,
 ) -> dict:
     """Main orchestrator for mass email generation.
 
@@ -233,6 +232,7 @@ async def mass_generate_emails(
     skipped = 0
     processed_since_save = 0
     error_details: list[dict] = []
+    results_written_count = 0
 
     # 4. Process in batches
     for batch_start in range(0, len(rows_to_process), batch_size):
@@ -307,6 +307,11 @@ async def mass_generate_emails(
                     logger.info("Saved %d rows to %s", processed_since_save, csv_path)
                     processed_since_save = 0
 
+                if sheet_write_callback and results_written_count < len(results):
+                    new_batch = results[results_written_count:]
+                    await sheet_write_callback(new_batch)
+                    results_written_count = len(results)
+
             # Report progress after this row
             if progress_callback:
                 progress_callback(successful + skipped, total_requested)
@@ -314,6 +319,11 @@ async def mass_generate_emails(
     # Final save
     df.to_csv(csv_path, index=False)
     logger.info("Final save: %d rows written to %s", len(rows_to_process), csv_path)
+
+    if sheet_write_callback and results_written_count < len(results):
+        remaining = results[results_written_count:]
+        await sheet_write_callback(remaining)
+        results_written_count = len(results)
 
     has_errors = len(error_details) > 0
     if has_errors:
