@@ -20,6 +20,21 @@ from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CAN
 
 load_dotenv(override=True)
 
+_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_path = os.path.join(_log_dir, "website_email_gen.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(_log_path, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+    force=True,
+)
+
 
 def _classify_rate_limit_bucket(message: str) -> str:
     """Classify rate-limit scope for easier client handling."""
