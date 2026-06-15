@@ -4,6 +4,7 @@ for mass email generation servers.
 """
 
 import asyncio
+import logging
 import uuid
 
 import os
@@ -87,6 +88,13 @@ async def get_credentials(request: Request) -> Credentials | None:
             return None
 
     return creds
+
+
+def html_encode_non_ascii(text: str) -> str:
+    """Pre-encode non-ASCII characters as HTML numeric entities (&#NNN;)
+    to prevent mojibake in downstream email delivery (Instantly).
+    ASCII characters (0-127) are left unchanged."""
+    return text.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────
@@ -181,8 +189,8 @@ async def _run_mass_generate(
                         credentials, google_sheet_url,
                         jobs[job_id]["results"]["results"],
                     )
-            except Exception:
-                pass
+            except Exception as sheet_err:
+                logging.warning("Failed to write results to sheet for job %s: %s", job_id, sheet_err)
         jobs[job_id]["status"] = JOB_ERROR
         jobs[job_id]["error"] = str(e)
 

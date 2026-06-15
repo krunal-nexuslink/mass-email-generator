@@ -14,7 +14,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
 
-from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii
 
 load_dotenv(override=True)
 
@@ -81,6 +81,9 @@ STRUCTURE:
 - Opening: one line referencing something real and specific from their website
 - Middle: a brief, thoughtful observation + how NexusLink has helped similar companies
 - Closing: one soft line that ends naturally — no ask, no CTA, no commitment request
+- Greeting on its own line, followed by a blank line
+- Each body paragraph separated by a blank line
+- Closing and signature on separate lines with a blank line before signature
 
 STRICT RULES:
 - Greet with exactly: Hi {receiver_name},
@@ -93,6 +96,8 @@ STRICT RULES:
 - Never fabricate or assume sender's company name, team size, or location — if not provided, omit entirely
 - Never write "[my company]", "[your company]", or any bracketed placeholder
 - Never generate fake URLs or links
+- Use blank lines between the greeting, each body paragraph, and the closing signature
+- In the closing signature, Don't write sender's first name. Just write "Best Regards," in bolds instead.
 
 Sender: {sender_name}
 Sender's objective: {sender_objective}
@@ -195,6 +200,9 @@ async def generate_email(filled_prompt: str) -> dict:
     if match:
         subject = match.group(1).strip()
         body = text[match.end():].strip()
+
+    if body:
+        body = html_encode_non_ascii(body)
 
     return {"subject": subject, "body": body}
 

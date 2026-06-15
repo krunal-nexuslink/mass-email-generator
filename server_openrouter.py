@@ -5,6 +5,7 @@ Mirrors server.py behavior while replacing Groq with OpenRouter via OpenAI clien
 
 import asyncio
 import json
+import logging
 import os
 import re
 
@@ -15,7 +16,7 @@ from fastapi import HTTPException
 from openai import OpenAI
 from pydantic import BaseModel
 
-from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii
 
 load_dotenv(override=True)
 
@@ -67,6 +68,8 @@ Writing requirements:
 - Tone: sharp, peer-to-peer, concise, no fluff, no sales voice
 - Greet exactly with: Hi <receiver_name>,
 - End with sender first name only
+- Use blank lines between the greeting, each body paragraph, and the closing signature
+- In the closing signature, Don't write sender's first name. Just write "Best Regards," instead.
 - Body length: strictly 120 to 180 words
 - No bullet points in email body
 - Do not use: "I hope this email finds you well", "introducing", "impressed by", or close synonyms
@@ -159,6 +162,8 @@ def _extract_subject_body(text: str) -> dict:
     if match:
         subject = match.group(1).strip()
         body = body[match.end() :].strip()
+    if body:
+        body = html_encode_non_ascii(body)
     return {"subject": subject, "body": body}
 
 
@@ -247,9 +252,9 @@ async def generate_website_email(req: EmailRequest):
             )
         raise HTTPException(status_code=502, detail=f"LLM generation failed: {message}")
 
-    print(f"Generated email for {req.receiver_name} at {req.receiver_website}")
-    print("Subject:", email["subject"])
-    print("Body:", email["body"])
+    logging.info("Generated email for %s at %s", req.receiver_name, req.receiver_website)
+    logging.debug("Subject: %s", email["subject"])
+    logging.debug("Body: %s", email["body"])
     return {
         "receiver": req.receiver_name,
         "subject": email["subject"],

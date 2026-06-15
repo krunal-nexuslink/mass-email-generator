@@ -238,112 +238,116 @@ Rules: No em dashes. No bullets. No bold. Never mention team size or experience.
 
     return results
 
+def batch_email_generation(start_row: int, end_row: int) -> None:
+    start_idx = load_checkpoint()
+    if start_idx > 0:
+        logging.info("Resuming from row index %d based on checkpoint", start_idx)
+    else:
+        logging.info("No checkpoint found; starting from row index 0")
 
-start_idx = load_checkpoint()
-if start_idx > 0:
-    logging.info("Resuming from row index %d based on checkpoint", start_idx)
-else:
-    logging.info("No checkpoint found; starting from row index 0")
-
-try:
-    for idx, row in df.iloc[start_idx:max_rows].iterrows():
-        print(f"Processing row {idx}...")
-        receiver_full_name = row['First name']
-        receiver_domain = row['Company domain']
-        receiver_company_description = normalize_company_description(
-            row['Company description'],
-            idx,
-        )
-
-        if pd.isna(receiver_full_name) or pd.isna(receiver_domain):
-            logging.warning(f"Skipping row {idx} due to missing values.")
-            df.at[idx, 'generated_email_subject'] = "N/A"
-            df.at[idx, 'generated_email_body'] = "N/A"
-            save_checkpoint(idx + 1)
-            continue
-
-        logging.info(f"Processing row {idx}: {receiver_full_name} <{receiver_domain}>")
-        payload = {
-            "sender_name": "Prem Anjwani",
-            "sender_role": "Co-founder",
-            "sender_objective": """
-                                You are a B2B email writer for NexusLink Services (nexuslinkservices.com), a custom software company having experience in working alongside as partners with IT companies, various industries like logistics, fleet management, and warehouse management, healthcare, Realestate, Financial institutions across Europe and US build operational software and automations to ease their manual work.
-Use receiver's website or details to write a personalized email:
-Hi [First Name],
-One hook line. No "impressed with" statements.
-One specific observation about their role and company. Not a compliment.
-"At NexusLink we have been helping..." - one specific relevant build, no feature lists.
-"I am curious whether..." - one specific open-ended question about their operations.
-End with: "Happy to have a short conversation."
-Rules: No em dashes. No bullets. No bold. Never mention team size or experience. No "leading provider" or "solutions". Subject 6 to 9 words. Body 130 to 180 words. Peer-to-peer tone.
-                            """,
-            "receiver_name": receiver_full_name,
-            "receiver_website": receiver_domain,
-            "company_description": receiver_company_description
-        }
-
-        while True:
-            elapsed = time.time() - last_request_time
-            if elapsed < min_interval_seconds:
-                time.sleep(min_interval_seconds - elapsed)
-
-            response = requests.post(URL, json=payload, timeout=180)
-            last_request_time = time.time()
-            print(f"Response for row {idx}: {response.status_code} - {response.text}")
-
-            if response.status_code == 200:
-                data = response.json()
-                subject = str(data.get("subject") or "")
-                body = str(data.get("body") or "")
-                df.at[idx, "generated_email_subject"] = subject
-                df.at[idx, "generated_email_body"] = body
-                save_checkpoint(idx + 1)
-                processed_since_save += 1
-
-                if processed_since_save >= save_every:
-                    df.to_csv(csv_path, index=False)
-                    processed_since_save = 0
-                break
-
-            if response.status_code == 429:
-                bucket, cause = parse_rate_limit_bucket(response)
-                if bucket == "minute":
-                    logging.warning("Rate limit (minute) at row %d: %s", idx, cause)
-                    wait_until_next_minute()
-                    continue
-
-                if bucket == "day":
-                    logging.error("Rate limit (day) at row %d: %s", idx, cause)
-                    raise RuntimeError(
-                        f"Daily limit reached at row {idx}. Cause: {cause}. "
-                        "Switch to a different org/project key and rerun to resume from checkpoint."
-                    )
-
-                logging.error("Rate limit (unknown bucket) at row %d: %s", idx, cause)
-                raise RuntimeError(f"Rate limit at row {idx}. Cause: {cause}")
-
-            if is_no_context_422(response):
-                logging.warning(
-                    "Skipping row %d because website scraping failed and company description is missing.",
-                    idx,
-                )
-                df.at[idx, "generated_email_subject"] = "N/A"
-                df.at[idx, "generated_email_body"] = "N/A"
-                save_checkpoint(idx + 1)
-                processed_since_save += 1
-
-                if processed_since_save >= save_every:
-                    df.to_csv(csv_path, index=False)
-                    processed_since_save = 0
-                break
-
-            logging.error("Request failed at row %d with status %d: %s", idx, response.status_code, response.text)
-            raise RuntimeError(
-                f"Request failed at row {idx} with status {response.status_code}. "
-                f"Response: {response.text}"
+    try:
+        for idx, row in df.iloc[start_idx:max_rows].iterrows():
+            logging.debug("Processing row %d...", idx)
+            receiver_full_name = row['First name']
+            receiver_domain = row['Company domain']
+            receiver_company_description = normalize_company_description(
+                row['Company description'],
+                idx,
             )
-finally:
-    df.to_csv(csv_path, index=False)
 
-if start_idx < max_rows:
-    clear_checkpoint()
+            if pd.isna(receiver_full_name) or pd.isna(receiver_domain):
+                logging.warning(f"Skipping row {idx} due to missing values.")
+                df.at[idx, 'generated_email_subject'] = "N/A"
+                df.at[idx, 'generated_email_body'] = "N/A"
+                save_checkpoint(idx + 1)
+                continue
+
+            logging.info(f"Processing row {idx}: {receiver_full_name} <{receiver_domain}>")
+            payload = {
+                "sender_name": "Prem Anjwani",
+                "sender_role": "Co-founder",
+                "sender_objective": """
+                                    You are a B2B email writer for NexusLink Services (nexuslinkservices.com), a custom software company having experience in working alongside as partners with IT companies, various industries like logistics, fleet management, and warehouse management, healthcare, Realestate, Financial institutions across Europe and US build operational software and automations to ease their manual work.
+    Use receiver's website or details to write a personalized email:
+    Hi [First Name],
+    One hook line. No "impressed with" statements.
+    One specific observation about their role and company. Not a compliment.
+    "At NexusLink we have been helping..." - one specific relevant build, no feature lists.
+    "I am curious whether..." - one specific open-ended question about their operations.
+    End with: "Happy to have a short conversation."
+    Rules: No em dashes. No bullets. No bold. Never mention team size or experience. No "leading provider" or "solutions". Subject 6 to 9 words. Body 130 to 180 words. Peer-to-peer tone.
+                                """,
+                "receiver_name": receiver_full_name,
+                "receiver_website": receiver_domain,
+                "company_description": receiver_company_description
+            }
+
+            while True:
+                elapsed = time.time() - last_request_time
+                if elapsed < min_interval_seconds:
+                    time.sleep(min_interval_seconds - elapsed)
+
+                response = requests.post(URL, json=payload, timeout=180)
+                last_request_time = time.time()
+                logging.info("Response for row %d: %s", idx, response.status_code)
+                logging.debug("Response body for row %d: %s", idx, response.text[:500])
+
+                if response.status_code == 200:
+                    data = response.json()
+                    subject = str(data.get("subject") or "")
+                    body = str(data.get("body") or "")
+                    df.at[idx, "generated_email_subject"] = subject
+                    df.at[idx, "generated_email_body"] = body
+                    save_checkpoint(idx + 1)
+                    processed_since_save += 1
+
+                    if processed_since_save >= save_every:
+                        df.to_csv(csv_path, index=False)
+                        processed_since_save = 0
+                    break
+
+                if response.status_code == 429:
+                    bucket, cause = parse_rate_limit_bucket(response)
+                    if bucket == "minute":
+                        logging.warning("Rate limit (minute) at row %d: %s", idx, cause)
+                        wait_until_next_minute()
+                        continue
+
+                    if bucket == "day":
+                        logging.error("Rate limit (day) at row %d: %s", idx, cause)
+                        raise RuntimeError(
+                            f"Daily limit reached at row {idx}. Cause: {cause}. "
+                            "Switch to a different org/project key and rerun to resume from checkpoint."
+                        )
+
+                    logging.error("Rate limit (unknown bucket) at row %d: %s", idx, cause)
+                    raise RuntimeError(f"Rate limit at row {idx}. Cause: {cause}")
+
+                if is_no_context_422(response):
+                    logging.warning(
+                        "Skipping row %d because website scraping failed and company description is missing.",
+                        idx,
+                    )
+                    df.at[idx, "generated_email_subject"] = "N/A"
+                    df.at[idx, "generated_email_body"] = "N/A"
+                    save_checkpoint(idx + 1)
+                    processed_since_save += 1
+
+                    if processed_since_save >= save_every:
+                        df.to_csv(csv_path, index=False)
+                        processed_since_save = 0
+                    break
+
+                logging.error("Request failed at row %d with status %d: %s", idx, response.status_code, response.text)
+                raise RuntimeError(
+                    f"Request failed at row {idx} with status {response.status_code}. "
+                    f"Response: {response.text}"
+                )
+    finally:
+        df.to_csv(csv_path, index=False)
+
+    if start_idx < max_rows:
+        clear_checkpoint()
+
+if __name__ == "__main__":
+    logging.info("Email generation process completed.")
