@@ -87,7 +87,6 @@ STRUCTURE:
 
 STRICT RULES:
 - Greet with exactly: Hi {receiver_name},
-- End with sender's first name only
 - Email body must be 120–180 words — strictly enforce this
 - No bullet points inside the email body
 - No "I hope this email finds you well", no "introducing", no "impressed by", no synonyms of these
@@ -97,7 +96,7 @@ STRICT RULES:
 - Never write "[my company]", "[your company]", or any bracketed placeholder
 - Never generate fake URLs or links
 - Use blank lines between the greeting, each body paragraph, and the closing signature
-- In the closing signature, Don't write sender's first name. Just write "Best Regards," in bolds instead.
+- The email must end EXACTLY with a blank line followed by "Best Regards," on its own line — no text after it, no name, no title, no company, no character at all.
 
 Sender: {sender_name}
 Sender's objective: {sender_objective}

@@ -67,9 +67,8 @@ How to align with NexusLink:
 Writing requirements:
 - Tone: sharp, peer-to-peer, concise, no fluff, no sales voice
 - Greet exactly with: Hi <receiver_name>,
-- End with sender first name only
 - Use blank lines between the greeting, each body paragraph, and the closing signature
-- In the closing signature, Don't write sender's first name. Just write "Best Regards," instead.
+- The email must end EXACTLY with a blank line followed by "Best Regards," on its own line — no text after it, no name, no title, no company, no character at all.
 - Body length: strictly 120 to 180 words
 - No bullet points in email body
 - Do not use: "I hope this email finds you well", "introducing", "impressed by", or close synonyms
