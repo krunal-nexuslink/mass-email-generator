@@ -1,6 +1,23 @@
 let currentJobId = null;
 let pollingTimer = null;
 
+function resetForNewBatch() {
+  // Cancel any ongoing polling
+  if (pollingTimer) {
+    clearTimeout(pollingTimer);
+    pollingTimer = null;
+  }
+  currentJobId = null;
+
+  // Hide results/progress, show form
+  document.getElementById("results-section").style.display = "none";
+  document.getElementById("progress-section").style.display = "none";
+  document.getElementById("email-form").style.display = "block";
+
+  // Reset form fields
+  document.getElementById("email-form").reset();
+}
+
 let isAuthenticated = false;
 
 async function checkAuthStatus() {
@@ -202,7 +219,7 @@ function showResults(results) {
   table.innerHTML = html;
 
   table.insertAdjacentHTML("afterend",
-    '<p style="margin-top:16px"><a href="#" onclick="location.reload();return false">← Generate another batch</a></p>');
+    '<p style="margin-top:16px"><a href="#" onclick="resetForNewBatch();return false">← Generate another batch</a></p>');
 }
 
 function showError(message) {
@@ -210,7 +227,7 @@ function showError(message) {
   document.getElementById("results-section").style.display = "block";
   document.getElementById("results-summary").innerHTML =
     `<span class="error-msg">❌ Error: ${escapeHtml(message)}</span>` +
-    '<p style="margin-top:12px"><a href="#" onclick="location.reload();return false">← Try again</a></p>';
+    '<p style="margin-top:12px"><a href="#" onclick="resetForNewBatch();return false">← Try again</a></p>';
 }
 
 function escapeHtml(text) {
