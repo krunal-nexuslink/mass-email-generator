@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from openai import OpenAI
 from pydantic import BaseModel
 
-from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii, normalize_first_name
+from core import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii, normalize_first_name
 
 load_dotenv(override=True)
 
@@ -205,7 +205,7 @@ async def generate_email(user_message: str) -> dict:
 
 
 # ── Function Registration for Mass Generation ──────────────────────────────────
-from server_shared import FUNCTIONS
+from core import FUNCTIONS
 
 
 async def _openrouter_generate_email(sn, sr, so, rn, rd, wc, cd):
