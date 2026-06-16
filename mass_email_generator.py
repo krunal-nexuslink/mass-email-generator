@@ -98,21 +98,15 @@ async def _process_single_row(
     When generate_email_fn / scrape_website_fn are provided, they are used directly.
     When omitted, the function falls back to importing from server.py (backward compat).
     """
-    # ── Resolve functions: injected or fall back to server imports ──────────
+    # ── Resolve functions: injected or raise RuntimeError ──────────────────
     if generate_email_fn is not None and scrape_website_fn is not None:
         _generate_email = generate_email_fn
         _scrape_website = scrape_website_fn
     else:
-        import server
-
-        async def _generate_email(
-            sn: str, sr: str, so: str, rn: str, rd: str, wc: str, cd: str
-        ) -> tuple[str, str]:
-            prompt = server.build_prompt(sn, sr, so, rn, rd, wc, cd)
-            result = await server.generate_email(prompt)
-            return result["subject"], result["body"]
-
-        _scrape_website = server.scrape_website  # sync Callable[[str], str]
+        raise RuntimeError(
+            "generate_email_fn and scrape_website_fn must be provided. "
+            "Callers should inject these functions via the FUNCTIONS registry."
+        )
 
     # ── Extract row data ────────────────────────────────────────────────────
     first_name = row.get("First name", "")
