@@ -6,6 +6,7 @@ and writes results back to the sheet.
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Awaitable, Callable
 
@@ -61,9 +62,42 @@ def _read_sheet_csv(sheet_id: str, gid: int = 0) -> pd.DataFrame:
 
 
 def _get_csv_path(sheet_url: str) -> str:
-    """Derive a CSV filename from the Google Sheet URL."""
+    """Derive a CSV filename from the Google Sheet URL, in the csv/ directory."""
     sheet_id, _ = _parse_sheet_url(sheet_url)
-    return f"mass_email_output_{sheet_id}.csv"
+    csv_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csv")
+    os.makedirs(csv_dir, exist_ok=True)
+    return os.path.join(csv_dir, f"mass_email_output_{sheet_id}.csv")
+
+
+def _rotate_csv_backups(max_files: int = 5) -> None:
+    """Delete oldest CSV backup files beyond `max_files`.
+
+    Scans the csv/ directory for files matching `mass_email_output_*.csv`,
+    sorts by modification time (oldest first), and deletes excess files.
+    """
+    csv_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csv")
+    if not os.path.isdir(csv_dir):
+        return
+
+    pattern = re.compile(r"^mass_email_output_.+\.csv$")
+    files = []
+    for fname in os.listdir(csv_dir):
+        if pattern.match(fname):
+            fpath = os.path.join(csv_dir, fname)
+            files.append((os.path.getmtime(fpath), fpath))
+
+    if len(files) <= max_files:
+        return
+
+    # Sort by mtime ascending (oldest first)
+    files.sort(key=lambda x: x[0])
+
+    # Delete oldest files beyond the max
+    for _, fpath in files[:len(files) - max_files]:
+        try:
+            os.remove(fpath)
+        except OSError:
+            pass  # best-effort cleanup
 
 
 
@@ -313,6 +347,7 @@ async def mass_generate_emails(
     # Final save
     df.to_csv(csv_path, index=False)
     logger.info("Final save: %d rows written to %s", len(rows_to_process), csv_path)
+    _rotate_csv_backups()
 
     if sheet_write_callback and results_written_count < len(results):
         remaining = results[results_written_count:]
