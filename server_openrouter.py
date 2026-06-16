@@ -3,7 +3,6 @@ OpenRouter-backed email generation server.
 Mirrors server.py behavior while replacing Groq with OpenRouter via OpenAI client.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -13,7 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from fastapi import HTTPException
-from openai import OpenAI
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from core import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii, normalize_first_name
@@ -56,7 +55,7 @@ def _classify_rate_limit_bucket(message: str) -> str:
 
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
-client = OpenAI(
+client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )
@@ -182,8 +181,8 @@ def _extract_subject_body(text: str) -> dict:
     return {"subject": subject, "body": body}
 
 
-def _generate_email_sync(user_message: str) -> dict:
-    completion = client.chat.completions.create(
+async def generate_email(user_message: str) -> dict:
+    completion = await client.chat.completions.create(
         model=OPENROUTER_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -197,11 +196,6 @@ def _generate_email_sync(user_message: str) -> dict:
 
     content = completion.choices[0].message.content or ""
     return _extract_subject_body(content)
-
-
-async def generate_email(user_message: str) -> dict:
-    """Run blocking OpenRouter call in a worker thread."""
-    return await asyncio.to_thread(_generate_email_sync, user_message)
 
 
 # ── Function Registration for Mass Generation ──────────────────────────────────
