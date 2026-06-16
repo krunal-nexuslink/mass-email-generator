@@ -38,8 +38,8 @@
 2. Click "Create Credentials", then select "OAuth client ID"
 3. Set Application type to "Web application"
 4. Name: "Mass Email Generator Web Client"
-5. Add Authorized JavaScript origins: `http://localhost:5173`
-6. Add Authorized redirect URIs: `http://localhost:7000/auth/google/callback`
+5. **Authorized JavaScript origins**: Enter the frontend URL (default `http://localhost:5173`, configurable via `FRONTEND_URL` in `.env`)
+6. **Authorized redirect URIs**: Enter the backend callback URL (default `http://localhost:7000/auth/google/callback`, configurable via `BACKEND_HOST`/`BACKEND_PORT` in `.env`)
 7. Click "Create"
 
 ### 4a. Edit an Existing OAuth 2.0 Client
@@ -49,15 +49,15 @@ If you already have a client ID and need to update its JavaScript origins or red
 1. Go to https://console.cloud.google.com/apis/credentials
 2. Find your OAuth 2.0 Client ID in the list
 3. Click the **pencil/edit icon** on the right side of that entry
-4. Under **Authorized JavaScript origins**: click **Add URI** and enter `http://localhost:5173`
-5. Under **Authorized redirect URIs**: click **Add URI** and enter `http://localhost:7000/auth/google/callback`
+4. Under **Authorized JavaScript origins**: click **Add URI** and enter the frontend URL (default `http://localhost:5173`)
+5. Under **Authorized redirect URIs**: click **Add URI** and enter the backend callback URL (default `http://localhost:7000/auth/google/callback`)
 6. Click **Save** at the bottom
 
 These settings can be updated anytime without creating a new client.
 
 ### 5. Copy Credentials to .env
 
-After creation, a dialog shows your Client ID and Client Secret. Copy them into your `.env` file:
+After creation, a dialog shows your Client ID and Client Secret. Copy them into your `.env` file (copy `.env.example` to `.env` first):
 
 ```bash
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
@@ -79,12 +79,13 @@ SESSION_SECRET_KEY=generate-a-random-string-here
 
 ### 7. Run the Application
 
-1. Start the backend: `python3 server.py`
-2. Start the frontend: `cd ui && npm run dev`
-3. Open http://localhost:5173
-4. Click "Sign in with Google"
-5. After authentication, check "Write results to sheet"
-6. Submit a generation job
+1. Copy `.env.example` to `.env` and fill in your credentials
+2. Start the backend: `uvicorn server:app --host 0.0.0.0 --port 7000` (or use `server_openrouter:app` for the OpenRouter variant)
+3. Start the frontend: `cd ui && npm run dev`
+4. Open the frontend URL (default http://localhost:5173, set via `FRONTEND_URL` in `.env`)
+5. Click "Sign in with Google"
+6. After authentication, check "Write results to sheet"
+7. Submit a generation job
 
 ## Troubleshooting
 

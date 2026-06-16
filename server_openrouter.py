@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from openai import OpenAI
 from pydantic import BaseModel
 
-from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii, normalize_first_name
 
 load_dotenv(override=True)
 
@@ -157,6 +157,7 @@ def build_user_message(
     company_description: str | None = None,
 ) -> str:
     """Build dynamic prompt content kept in user message payload."""
+    receiver_name = normalize_first_name(receiver_name)
     payload = {
         "sender_name": sender_name,
         "sender_role": sender_role,

@@ -5,7 +5,9 @@ for mass email generation servers.
 
 import asyncio
 import logging
+import re
 import uuid
+import unicodedata
 
 import os
 
@@ -23,6 +25,15 @@ from dotenv import load_dotenv
 # Load .env so env vars are available regardless of entry point
 load_dotenv()
 
+# ── Configurable URLs from environment ──────────────────────────────────────────
+# These are used for CORS, OAuth redirects, and frontend navigation.
+# Set FRONTEND_URL / BACKEND_HOST / BACKEND_PORT in .env to customise.
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
+BACKEND_PORT = os.getenv("BACKEND_PORT", "7000")
+BACKEND_URL = os.getenv("BACKEND_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}").rstrip("/")
+
 # ── App + CORS + Sessions ──────────────────────────────────────────────────────
 
 app = FastAPI()
@@ -35,7 +46,7 @@ app.add_middleware(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,6 +106,50 @@ def html_encode_non_ascii(text: str) -> str:
     to prevent mojibake in downstream email delivery (Instantly).
     ASCII characters (0-127) are left unchanged."""
     return text.encode("ascii", "xmlcharrefreplace").decode("ascii")
+
+
+def normalize_first_name(name: str) -> str:
+    """Clean a first name by removing emoji/mojibake/quoted nicknames.
+
+    Strips emoji, fixes UTF-8 mojibake (e.g., Ã© → é → e),
+    removes quoted nicknames ('q', "zabe"), and normalizes accented
+    characters to ASCII. Compound names (Mary Jane) are kept intact.
+    """
+    if not name:
+        return ""
+
+    # 1. Strip chars outside Latin-1 (0x00-0xFF). Kills emoji, replacement
+    #    chars, and chars like Ÿ/U+0178 that NFKD-decompose into ASCII.
+    name = re.sub(r"[^\x00-\xFF]", "", name)
+
+    # 2. Fix UTF-8 mojibake (Ã© → é, Ã³ → ó)
+    try:
+        name = name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+
+    # 3. Strip quoted nicknames ('q', "zabe")
+    name = re.sub(r"""['"][^'"]*['"]""", "", name)
+
+    # 4. NFKD decompose (é → e + combining mark)
+    name = unicodedata.normalize("NFKD", name)
+
+    # 5. Keep only ASCII (drops emoji, combining marks, control chars)
+    name = name.encode("ascii", "ignore").decode("ascii")
+
+    # 6. Keep only letters, spaces, hyphens
+    name = re.sub(r"[^a-zA-Z\s-]", "", name)
+
+    # 7. Collapse whitespace and trim
+    name = " ".join(name.split())
+
+    # 8. Strip leading single-letter tokens (emoji mojibake remnants)
+    tokens = name.split()
+    while tokens and len(tokens[0]) == 1 and tokens[0].isalpha():
+        tokens.pop(0)
+    name = " ".join(tokens)
+
+    return name
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────
@@ -282,12 +337,12 @@ async def google_login(request: Request):
                 "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost:7000/auth/google/callback"],
+                "redirect_uris": [f"{BACKEND_URL}/auth/google/callback"],
             }
         },
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    flow.redirect_uri = "http://localhost:7000/auth/google/callback"
+    flow.redirect_uri = f"{BACKEND_URL}/auth/google/callback"
 
     # Enable PKCE and generate code_verifier
     flow.autogenerate_code_verifier = True
@@ -322,12 +377,12 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
                 "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost:7000/auth/google/callback"],
+                "redirect_uris": [f"{BACKEND_URL}/auth/google/callback"],
             }
         },
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    flow.redirect_uri = "http://localhost:7000/auth/google/callback"
+    flow.redirect_uri = f"{BACKEND_URL}/auth/google/callback"
 
     # Restore the PKCE code_verifier from the login step
     flow.code_verifier = request.session.get("code_verifier")
@@ -356,7 +411,7 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
         return JSONResponse(status_code=400, content={"error": f"Token exchange failed: {str(e)}"})
 
     # Redirect back to frontend
-    return RedirectResponse(url="http://localhost:5173", status_code=302)
+    return RedirectResponse(url=FRONTEND_URL, status_code=302)
 
 
 @app.get("/auth/status")

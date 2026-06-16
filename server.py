@@ -14,7 +14,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
 
-from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii
+from server_shared import app, jobs, JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_CANCELLED, JOB_ERROR, MassEmailRequest, html_encode_non_ascii, normalize_first_name
 
 load_dotenv(override=True)
 
@@ -170,6 +170,7 @@ def build_prompt(sender_name: str, sender_role: str, sender_objective: str,
                  receiver_name: str, receiver_domain:str, website_content: str,
                  company_description: str | None = None) -> str:
     """Fill the prompt template with all inputs."""
+    receiver_name = normalize_first_name(receiver_name)
     prompt = PromptTemplate(
         template=EMAIL_PROMPT,
         input_variables=["sender_name", "sender_role", "sender_objective",

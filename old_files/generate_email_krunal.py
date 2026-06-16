@@ -22,7 +22,7 @@ logging.basicConfig(
 
 load_dotenv(override=True)
 # print("Environment variables loaded successfully.")
-csv_path = "/home/nls189/Documents/Projects/mass_email_generator_krunal/mass-email-generator/CXOs data - email generation based on website  - EU-Austria-Germany-Swiss-IT-Finance-04-06-26.csv"
+csv_path = "/home/nls189/Documents/Projects/mass_email_generator_krunal/mass-email-generator/old_files/CXOs data - email generation based on website  - US-IT_Software development-15-06-26.csv"
 df = pd.read_csv(
     csv_path,
     dtype={
